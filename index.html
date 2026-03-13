@@ -1166,8 +1166,13 @@ async function openInfo(exIdx, exName) {
     const info=JSON.parse(text.replace(/```json|```/g,'').trim());
     infoCache[exName]=info; renderInfo(info);
   } catch(e){
-    const msg = e.message==='NO_KEY' ? 'Configurá tu API key en Ajustes.' : 'No se pudo cargar la info.';
-    document.getElementById('infoBody').innerHTML=`<div style="padding:20px;color:var(--muted);text-align:center;">${msg}</div>`;
+    const msg = e.message==='NO_KEY' ? 'Configurá tu API key en Ajustes.' 
+      : e.message.includes('401') ? 'API key inválida. Verificala en Ajustes.'
+      : e.message.includes('403') ? 'Acceso denegado. Verificá tu API key.'
+      : e.message.includes('429') ? 'Demasiadas requests. Esperá un momento.'
+      : e.message.includes('Failed to fetch') ? 'Error de red. Verificá tu conexión.'
+      : `Error: ${e.message}`;
+    document.getElementById('infoBody').innerHTML=`<div style="padding:20px;color:var(--muted);text-align:center;font-size:13px;line-height:1.7;">${msg}</div>`;
   }
 }
 
@@ -1810,8 +1815,12 @@ async function testApiKey() {
     status.innerHTML = `<span style="color:var(--green);">✓ Conexión exitosa — todo funciona</span>`;
     toast('✓ API key válida');
   } catch(e) {
-    const msg = e.message.includes('401') ? 'Key inválida o expirada' : e.message.includes('429') ? 'Límite de requests alcanzado' : e.message;
-    status.innerHTML = `<span style="color:var(--red);">✗ Error: ${msg}</span>`;
+    const detail = e.message.includes('401') ? 'Key inválida o expirada'
+      : e.message.includes('403') ? 'Acceso denegado'
+      : e.message.includes('429') ? 'Límite de requests alcanzado'
+      : e.message.includes('Failed to fetch') ? 'Error de red / CORS bloqueado'
+      : e.message;
+    status.innerHTML = `<span style="color:#f08080;">✗ ${detail}</span>`;
     toast('⚠ Error al conectar');
   }
 }
