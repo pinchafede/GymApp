@@ -404,6 +404,22 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min
 <div id="s-settings" class="screen">
   <div class="page-header"><div class="btn-back" onclick="navBack()">‹</div><div class="page-title">AJUSTES</div></div>
   <div style="padding:4px 0 40px;">
+    <div class="sec-label">Inteligencia Artificial</div>
+    <div class="settings-section">
+      <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+        <div><div class="settings-row-title">🔑 API Key de Anthropic</div><div class="settings-row-sub">Necesaria para 💡 ejercicios, coach y resumen post-entrenamiento</div></div>
+        <input class="input-f" type="password" id="cfgApiKey" placeholder="sk-ant-api03-..." style="width:100%;font-size:13px;">
+        <div style="display:flex;gap:8px;width:100%;">
+          <button onclick="saveApiKey()" class="btn-p" style="font-size:15px;padding:11px;flex:1;">GUARDAR KEY</button>
+          <button onclick="testApiKey()" class="btn-g" style="padding:11px 14px;">Probar</button>
+        </div>
+        <div id="apiKeyStatus" style="font-size:12px;color:var(--muted);"></div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.6;padding-top:2px;">
+          Conseguís tu key gratis en <strong style="color:var(--text);">console.anthropic.com</strong><br>
+          Se guarda solo en tu dispositivo, nunca sale de acá.
+        </div>
+      </div>
+    </div>
     <div class="sec-label">Perfil físico</div>
     <div class="settings-section">
       <div class="settings-row"><div><div class="settings-row-title">Peso</div></div><input class="input-f sm" type="number" inputmode="decimal" step="0.5" placeholder="70 kg" id="cfgPeso" style="width:90px;" oninput="updateBMR()"></div>
@@ -593,7 +609,38 @@ const db = {
     get:()=>{ try{return JSON.parse(localStorage.getItem('fede_futbol')||'[]')}catch{return[]} },
     set:v=>localStorage.setItem('fede_futbol',JSON.stringify(v))
   },
+  apiKey: {
+    get:()=>localStorage.getItem('fede_apikey')||'',
+    set:v=>localStorage.setItem('fede_apikey',v)
+  },
 };
+
+// ═══════════ AI HELPER ═══════════
+async function callAI(system, userMsg, maxTokens=700) {
+  const key = db.apiKey.get();
+  if (!key) throw new Error('NO_KEY');
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: userMsg }]
+    })
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(()=>({}));
+    throw new Error(err.error?.message || `HTTP ${r.status}`);
+  }
+  const d = await r.json();
+  return d.content.filter(b=>b.type==='text').map(b=>b.text).join('');
+}
 
 // ═══════════ TOAST ═══════════
 function toast(msg) {
@@ -1037,17 +1084,16 @@ async function fetchPostWorkoutAI(sess, prs, volDiff, completed, skipped) {
   const day = DAYS[sess.dayIdx];
   const prText = prs.length ? prs.map(p=>`${p.name}: nuevo PR ${p.kg}kg`).join(', ') : 'sin records nuevos';
   const volText = volDiff !== null ? `volumen ${volDiff>=0?'+':''}${volDiff}% vs sesión anterior` : 'primera sesión de este día';
+  const block = document.getElementById('postAiBlock');
+  if (!db.apiKey.get()) { if(block) block.style.display='none'; return; }
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      model:'claude-sonnet-4-20250514', max_tokens:200,
-      system:`Sos un entrenador personal. Hablás en segunda persona, español rioplatense (vos). Escribís UNA sola oración corta (máx 25 palabras) felicitando o motivando después del entrenamiento. Sos directo, humano, no genérico. Usá los datos reales de la sesión.`,
-      messages:[{role:'user',content:`Día: ${day.name}. Completó ${completed} ejercicios, salteó ${skipped}. ${prText}. ${volText}.`}]
-    })});
-    const d = await r.json();
-    const text = d.content.filter(b=>b.type==='text').map(b=>b.text).join('').trim();
-    const block = document.getElementById('postAiBlock');
-    if (block) block.innerHTML = `<div style="font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);font-weight:600;margin-bottom:6px;">🧠 Tu entrenador</div><div style="font-size:14px;line-height:1.6;color:#ccc;font-weight:300;">${text}</div>`;
-  } catch { const block = document.getElementById('postAiBlock'); if(block) block.style.display='none'; }
+    const text = await callAI(
+      `Sos un entrenador personal. Hablás en segunda persona, español rioplatense (vos). Escribís UNA sola oración corta (máx 25 palabras) felicitando o motivando después del entrenamiento. Sos directo, humano, no genérico. Usá los datos reales de la sesión.`,
+      `Día: ${day.name}. Completó ${completed} ejercicios, salteó ${skipped}. ${prText}. ${volText}.`,
+      200
+    );
+    if (block) block.innerHTML = `<div style="font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--accent);font-weight:600;margin-bottom:6px;">🧠 Tu entrenador</div><div style="font-size:14px;line-height:1.6;color:#ccc;font-weight:300;">${text.trim()}</div>`;
+  } catch { if(block) block.style.display='none'; }
 }
 
 function confirmSave() {
@@ -1108,17 +1154,21 @@ async function openInfo(exIdx, exName) {
   document.getElementById('infoBody').innerHTML=`<div style="padding:20px 0;text-align:center;"><div class="dots"><span></span><span></span><span></span></div><div style="margin-top:10px;color:var(--muted);font-size:13px;">Cargando info...</div></div>`;
   document.getElementById('infoOverlay').classList.add('open');
   if(infoCache[exName]){renderInfo(infoCache[exName]);return;}
+  if(!db.apiKey.get()){
+    document.getElementById('infoBody').innerHTML=`<div style="padding:20px;text-align:center;color:var(--muted);font-size:14px;line-height:1.7;">Para usar esta función necesitás configurar tu API key de Anthropic.<br><br><button onclick="navTo('settings');document.getElementById('infoOverlay').classList.remove('open')" class="btn-p" style="font-size:15px;padding:11px 20px;">Ir a Ajustes →</button></div>`;
+    return;
+  }
   try {
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      model:'claude-sonnet-4-20250514',max_tokens:700,
-      system:`Sos un entrenador experto. Respondé SOLO en JSON sin markdown: {"descripcion":"...","musculos_primarios":["..."],"musculos_secundarios":["..."],"tips":["...","...","..."],"error_comun":"..."}`,
-      messages:[{role:'user',content:`Info del ejercicio: "${exName}"`}]
-    })});
-    const d=await r.json();
-    const text=d.content.filter(b=>b.type==='text').map(b=>b.text).join('');
+    const text = await callAI(
+      `Sos un entrenador experto. Respondé SOLO en JSON sin markdown: {"descripcion":"...","musculos_primarios":["..."],"musculos_secundarios":["..."],"tips":["...","...","..."],"error_comun":"..."}`,
+      `Info del ejercicio: "${exName}"`
+    );
     const info=JSON.parse(text.replace(/```json|```/g,'').trim());
     infoCache[exName]=info; renderInfo(info);
-  } catch{document.getElementById('infoBody').innerHTML=`<div style="padding:20px;color:var(--muted);text-align:center;">No se pudo cargar la info.</div>`;}
+  } catch(e){
+    const msg = e.message==='NO_KEY' ? 'Configurá tu API key en Ajustes.' : 'No se pudo cargar la info.';
+    document.getElementById('infoBody').innerHTML=`<div style="padding:20px;color:var(--muted);text-align:center;">${msg}</div>`;
+  }
 }
 
 function renderInfo(info) {
@@ -1568,25 +1618,27 @@ async function fetchCoachAI(dayIdx,sessions,card,cacheKey) {
   const summary=day.exercises.map((ex,ei)=>{
     if(!ex.kg) return null;
     const a=analyseEx(dayIdx,ei); if(!a||!a.pts.length) return null;
-    const history=a.pts.slice(-4).map(p=>`${new Date(p.ts).toLocaleDateString('es-AR',{day:'numeric',month:'short'})}: ${p.maxKg}kg×${p.avgReps.toFixed(0)}reps (${p.completedS}s)`).join(' | ');
+    const history=a.pts.slice(-4).map(p=>`${new Date(p.ts).toLocaleDateString('es-AR',{day:'numeric',month:'short'})}: ${p.maxKg}kg\u00d7${p.avgReps.toFixed(0)}reps (${p.completedS}s)`).join(' | ');
     return `${ex.name}: ${history}`;
   }).filter(Boolean).join('\n');
   const lastDate=new Date(sessions[sessions.length-1].ts).toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'});
+  if (!db.apiKey.get()) {
+    card.innerHTML=`<div class="coach-label">\u{1F9E0} Tu entrenador personal</div><div style="font-size:13px;color:var(--muted);">Configurá tu API key en <span style="color:var(--accent);cursor:pointer;" onclick="navTo('settings')">Ajustes</span> para activar el coach.</div>`;
+    return;
+  }
   try {
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      model:'claude-sonnet-4-20250514',max_tokens:400,
-      system:`Sos un entrenador personal. Hablás en segunda persona, español rioplatense (vos), directo y motivador. En 3-4 oraciones máximo: resumís el progreso general, destacás el ejercicio donde más progresó, y das UNA recomendación concreta para la próxima sesión. Sin listas, solo texto fluido. Sé específico con los números.`,
-      messages:[{role:'user',content:`Día: ${day.name}\nSesiones: ${sessions.length}\nÚltima: ${lastDate}
-
-${summary}`}]
-    })});
-    const d=await r.json();
-    const text=d.content.filter(b=>b.type==='text').map(b=>b.text).join('');
+    const text = await callAI(
+      `Sos un entrenador personal. Hablás en segunda persona, español rioplatense (vos), directo y motivador. En 3-4 oraciones máximo: resumís el progreso general, destacás el ejercicio donde más progresó, y das UNA recomendación concreta para la próxima sesión. Sin listas, solo texto fluido. Sé específico con los números.`,
+      `Día: ${day.name}\nSesiones: ${sessions.length}\nÚltima: ${lastDate}\n\n${summary}`,
+      400
+    );
     coachCache[cacheKey]=text;
     card.innerHTML=`<div class="coach-label">🧠 Tu entrenador personal</div><div style="font-size:14px;line-height:1.65;color:#ccc;font-weight:300;">${text}</div>`;
-  } catch{ card.innerHTML=`<div class="coach-label">🧠 Tu entrenador personal</div><div style="font-size:13px;color:var(--muted);">No se pudo cargar el análisis.</div>`; }
+  } catch(e) {
+    const msg = e.message==='NO_KEY' ? 'Configurá tu API key en Ajustes.' : 'No se pudo cargar el análisis.';
+    card.innerHTML=`<div class="coach-label">🧠 Tu entrenador personal</div><div style="font-size:13px;color:var(--muted);">${msg}</div>`;
+  }
 }
-
 // ═══════════ SUPPLEMENTS ═══════════
 function toggleSupp(id) {
   const today=db.suppToday.get();
@@ -1703,6 +1755,13 @@ function loadSettings() {
   if(p.edad) document.getElementById('cfgEdad').value=p.edad;
   if(p.sexo) document.getElementById('cfgSexo').value=p.sexo;
   updateBMR();
+  // Load API key (show masked)
+  const key = db.apiKey.get();
+  const keyInput = document.getElementById('cfgApiKey');
+  if (key && keyInput) {
+    keyInput.value = key;
+    document.getElementById('apiKeyStatus').innerHTML = `<span style="color:var(--green);">✓ API key configurada</span>`;
+  }
 
   // Hidden exercises
   const sec=document.getElementById('hiddenSection');
@@ -1729,6 +1788,32 @@ function updateBMR() {
 function saveProfile() {
   db.profile.set({peso:parseFloat(document.getElementById('cfgPeso').value)||0,altura:parseFloat(document.getElementById('cfgAltura').value)||0,edad:parseFloat(document.getElementById('cfgEdad').value)||0,sexo:document.getElementById('cfgSexo').value});
   toast('✓ Perfil guardado');
+}
+
+function saveApiKey() {
+  const key = document.getElementById('cfgApiKey').value.trim();
+  if (!key) { toast('⚠ Ingresá tu API key'); return; }
+  if (!key.startsWith('sk-ant-')) { toast('⚠ La key debería empezar con sk-ant-'); return; }
+  db.apiKey.set(key);
+  document.getElementById('apiKeyStatus').innerHTML = `<span style="color:var(--green);">✓ API key guardada</span>`;
+  toast('✓ API key guardada');
+}
+
+async function testApiKey() {
+  const key = document.getElementById('cfgApiKey').value.trim();
+  if (!key) { toast('⚠ Ingresá tu API key primero'); return; }
+  db.apiKey.set(key);
+  const status = document.getElementById('apiKeyStatus');
+  status.innerHTML = `<span style="color:var(--muted);">Probando...</span>`;
+  try {
+    const text = await callAI('Respondé solo con la palabra: OK', 'test', 10);
+    status.innerHTML = `<span style="color:var(--green);">✓ Conexión exitosa — todo funciona</span>`;
+    toast('✓ API key válida');
+  } catch(e) {
+    const msg = e.message.includes('401') ? 'Key inválida o expirada' : e.message.includes('429') ? 'Límite de requests alcanzado' : e.message;
+    status.innerHTML = `<span style="color:var(--red);">✗ Error: ${msg}</span>`;
+    toast('⚠ Error al conectar');
+  }
 }
 
 function restoreEx(dayIdx,exIdx) {
